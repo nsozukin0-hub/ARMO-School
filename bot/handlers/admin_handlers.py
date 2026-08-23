@@ -192,7 +192,7 @@ async def process_post_media(message: Message, state: FSMContext):
         )
 
 
-@router.message(CreatePost.waiting_for_media, F.text.func=lambda x: x.strip().lower() == 'готово')
+@router.message(CreatePost.waiting_for_media, F.text, lambda x: x.strip().lower() == 'готово')
 async def publish_post(message: Message, state: FSMContext):
     """Публикация поста"""
     db = SessionLocal()

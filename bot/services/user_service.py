@@ -1,8 +1,10 @@
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import asyncio
 
 from bot.models.user import User
 from bot.models.subscription import Subscription
+from bot.services.max_api import max_client
 
 
 class UserService:
@@ -97,3 +99,20 @@ class UserService:
         
         user_ids = [sub.user_id for sub in subscriptions]
         return self.db.query(User).filter(User.id.in_(user_ids)).all()
+
+    async def send_message_to_user(self, telegram_id: int, text: str, attachments: list = None) -> bool:
+        """Отправить сообщение пользователю через API МАКС"""
+        try:
+            # В реальной реализации telegram_id должен быть связан с MAX user_id
+            # Для现在开始 используем telegram_id как user_id в MAX
+            await max_client.send_message(
+                user_id=telegram_id,
+                text=text,
+                attachments=attachments,
+                notify=True,
+                format_type="markdown"
+            )
+            return True
+        except Exception as e:
+            print(f"Ошибка отправки сообщения пользователю {telegram_id}: {e}")
+            return False
