@@ -1,4 +1,4 @@
-```
+```gitignore
 # Python
 __pycache__/
 *.py[cod]
@@ -20,50 +20,34 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual Environment
-venv/
-ENV/
-env/
+# Environment
 .venv/
-env.bak/
-venv.bak/
-
-# Environment variables
-.env
-.env.local
-.env.*
-
-# Dependencies
-node_modules/
-
-# Logs
-*.log
-
-# Coverage reports
-.coverage
-htmlcov/
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
+venv/
+env/
+ENV/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
+*.tmp
 
-# OS generated files
+# Logs
+*.log
+
+# OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Testing
+.pytest_cache/
+.mypy_cache/
 ```
