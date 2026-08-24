@@ -142,21 +142,20 @@ async def webhook_handler(request: Request):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-async def send_message(max_client: MAXAPIClient, chat_id: str, text: str, keyboard: dict = None):
+async def send_message(max_client: MAXAPIClient, user_id: str, text: str, keyboard: dict = None):
     """Отправка сообщения пользователю через MAX API"""
     if not max_client:
         logger.warning("MAX клиент не инициализирован")
         return None
     
-    logger.info(f"Отправка сообщения в чат {chat_id}: {text[:100]}...")
+    logger.info(f"Отправка сообщения пользователю {user_id}: {text[:100]}...")
     
-    # Если ваш max_client требует аргумент именно user_id, замените chat_id=chat_id на user_id=chat_id
-    result = await max_client.send_message(chat_id=chat_id, text=text, keyboard=keyboard)
+    result = await max_client.send_message(user_id=user_id, text=text, keyboard=keyboard)
     
     if result:
         logger.info(f"Сообщение успешно отправлено, result: {result}")
     else:
-        logger.error(f"Не удалось отправить сообщение в чат {chat_id}")
+        logger.error(f"Не удалось отправить сообщение пользователю {user_id}")
     return result
 
 
@@ -166,7 +165,7 @@ async def cmd_start(user_id: str, chat_id: str, user: dict, user_service: UserSe
     text = f"👋 Привет, {first_name}!\n\nЯ бот МАКС для школ района.\n\nВыберите интересующий вас раздел:"
     
     set_user_state(str(user_id), None)
-    await send_message(max_client, chat_id, text, get_main_menu())
+    await send_message(max_client, user_id, text, get_main_menu())
     
     return JSONResponse(status_code=200, content={"status": "ok"})
 
@@ -175,7 +174,7 @@ async def show_main_menu(user_id: str, chat_id: str, user: dict, max_client: MAX
     """Показ главного меню"""
     text = "Выберите раздел:"
     keyboard = get_main_menu()
-    await send_message(max_client, chat_id, text, keyboard)
+    await send_message(max_client, user_id, text, keyboard)
     return JSONResponse(status_code=200, content={"status": "ok"})
 
 
@@ -185,15 +184,15 @@ async def my_schools(user_id: str, chat_id: str, user: dict, user_service: UserS
     
     if not schools:
         text = "📭 На данный момент нет доступных школ.\nПопробуйте позже."
-        await send_message(max_client, chat_id, text, get_back_menu())
+        await send_message(max_client, user_id, text, get_back_menu())
         return JSONResponse(status_code=200, content={"status": "ok"})
     
     db_user_id = user.get('id') if user else user_id
     subscribed_ids = await user_service.get_subscribed_school_ids(db_user_id)
     keyboard = get_schools_selection_keyboard(schools, subscribed_ids)
     
-    text = "🏫 **Выберите школы**\n\nНажмите на школу, чтобы изменить статус подписки.\nКогда закончите, нажмите «💾 Сохранить»."
-    await send_message(max_client, chat_id, text, keyboard)
+    text = "🏫 **Выберите школы**\n\nНажмите на школу, чтобы изменить статус подписки.\nКогда закончите, нажмите «Сохранить»."
+    await send_message(max_client, user_id, text, keyboard)
     
     return JSONResponse(status_code=200, content={"status": "ok"})
 
@@ -201,7 +200,7 @@ async def my_schools(user_id: str, chat_id: str, user: dict, user_service: UserS
 async def latest_news(user_id: str, chat_id: str, user: dict, user_service: UserService, post_service: PostService, max_client: MAXAPIClient):
     """Показ последних новостей"""
     if not user:
-        await send_message(max_client, chat_id, "⚠️ Сначала начните работу с ботом (/start)", get_main_menu())
+        await send_message(max_client, user_id, "⚠️ Сначала начните работу с ботом (/start)", get_main_menu())
         return JSONResponse(status_code=200, content={"status": "ok"})
     
     db_user_id = user.get('id')
@@ -209,7 +208,7 @@ async def latest_news(user_id: str, chat_id: str, user: dict, user_service: User
     
     if not subscribed_ids:
         text = "📭 У вас нет подписок на школы.\n\nПерейдите в раздел «🏫 Мои школы», чтобы выбрать школы."
-        await send_message(max_client, chat_id, text, get_back_menu())
+        await send_message(max_client, user_id, text, get_back_menu())
         return JSONResponse(status_code=200, content={"status": "ok"})
     
     all_posts = []
@@ -221,7 +220,7 @@ async def latest_news(user_id: str, chat_id: str, user: dict, user_service: User
     
     if not all_posts:
         text = "📭 Новостей пока нет.\n\nПодпишитесь на школы, чтобы получать уведомления."
-        await send_message(max_client, chat_id, text, get_back_menu())
+        await send_message(max_client, user_id, text, get_back_menu())
         return JSONResponse(status_code=200, content={"status": "ok"})
     
     text = "📰 **Последние новости**\n\n"
@@ -230,7 +229,7 @@ async def latest_news(user_id: str, chat_id: str, user: dict, user_service: User
         post_text = post.get('text', '_Без текста_')
         text += f"📄 {created_at}\n{post_text}\n\n"
     
-    await send_message(max_client, chat_id, text, get_back_menu())
+    await send_message(max_client, user_id, text, get_back_menu())
     return JSONResponse(status_code=200, content={"status": "ok"})
 
 
@@ -238,7 +237,7 @@ async def admin_menu_request(user_id: str, chat_id: str, user: dict, max_client:
     """Запрос админ-меню (начало авторизации)"""
     set_user_state(str(user_id), 'admin_auth_login', {'step': 'login'})
     text = "🔐 **Админ-панель**\n\nВведите ваш логин:"
-    await send_message(max_client, chat_id, text, get_back_menu())
+    await send_message(max_client, user_id, text, get_back_menu())
     return JSONResponse(status_code=200, content={"status": "ok"})
 
 
@@ -267,7 +266,7 @@ async def handle_callback(callback_data: dict, user_id: str, chat_id: str, user:
         subscribed_ids = await user_service.get_subscribed_school_ids(db_user_id)
         keyboard = get_schools_selection_keyboard(schools, subscribed_ids)
         
-        await send_message(services['max_client'], chat_id, f"✅ {answer_text}", keyboard)
+        await send_message(services['max_client'], user_id, f"✅ {answer_text}", keyboard)
         return JSONResponse(status_code=200, content={"status": "ok", "answered": True})
     
     elif action == 'save_subscriptions':
@@ -276,16 +275,16 @@ async def handle_callback(callback_data: dict, user_id: str, chat_id: str, user:
         subscribed_ids = await user_service.get_subscribed_school_ids(db_user_id)
         
         logger.info(f"Пользователь {user_id} сохранил подписки: {len(subscribed_ids)} школ")
-        await send_message(services['max_client'], chat_id, f"✅ Ваши подписки сохранены!\n\nВы подписаны на {len(subscribed_ids)} школ(ы).", get_main_menu())
+        await send_message(services['max_client'], user_id, f"✅ Ваши подписки сохранены!\n\nВы подписаны на {len(subscribed_ids)} школ(ы).", get_main_menu())
         return JSONResponse(status_code=200, content={"status": "ok", "answered": True})
     
     elif action == 'menu_back':
-        await send_message(services['max_client'], chat_id, "Главное меню:", get_main_menu())
+        await send_message(services['max_client'], user_id, "Главное меню:", get_main_menu())
         return JSONResponse(status_code=200, content={"status": "ok", "answered": True})
     
     elif action == 'menu_admin':
         set_user_state(str(user_id), 'admin_auth_login', {'step': 'login'})
-        await send_message(services['max_client'], chat_id, "🔐 **Админ-панель**\n\nВведите ваш логин:", get_back_menu())
+        await send_message(services['max_client'], user_id, "🔐 **Админ-панель**\n\nВведите ваш логин:", get_back_menu())
         return JSONResponse(status_code=200, content={"status": "ok", "answered": True})
     
     return JSONResponse(status_code=200, content={"status": "ok", "answered": True})
@@ -294,12 +293,12 @@ async def handle_callback(callback_data: dict, user_id: str, chat_id: str, user:
 async def handle_admin_login(user_id: str, chat_id: str, text: str, state_data: dict, max_client: MAXAPIClient):
     """Обработка ввода логина админа"""
     if text != ADMIN_LOGIN:
-        await send_message(max_client, chat_id, "❌ Неверный логин. Попробуйте еще раз:", get_back_menu())
+        await send_message(max_client, user_id, "❌ Неверный логин. Попробуйте еще раз:", get_back_menu())
         return JSONResponse(status_code=200, content={"status": "ok"})
     
     state_data['login'] = text
     set_user_state(user_id, 'admin_auth_password', state_data)
-    await send_message(max_client, chat_id, "✅ Логин верный.\n\nВведите пароль:", get_back_menu())
+    await send_message(max_client, user_id, "✅ Логин верный.\n\nВведите пароль:", get_back_menu())
     return JSONResponse(status_code=200, content={"status": "ok"})
 
 
@@ -307,11 +306,11 @@ async def handle_admin_password(user_id: str, chat_id: str, text: str, state_dat
     """Обработка ввода пароля админа"""
     if text != ADMIN_PASSWORD:
         set_user_state(user_id, None)
-        await send_message(max_client, chat_id, "❌ Неверный пароль.\n\nДля входа в админ-панель введите /start и выберите «🔐 Админ-панель»", get_main_menu())
+        await send_message(max_client, user_id, "❌ Неверный пароль.\n\nДля входа в админ-панель введите /start и выберите «🔐 Админ-панель».", get_main_menu())
         return JSONResponse(status_code=200, content={"status": "ok"})
     
     set_user_state(user_id, None)
-    await send_message(max_client, chat_id, "✅ Авторизация успешна!", get_admin_menu())
+    await send_message(max_client, user_id, "✅ Авторизация успешна!", get_admin_menu())
     return JSONResponse(status_code=200, content={"status": "ok"})
 
 
@@ -322,9 +321,9 @@ async def handle_add_school(user_id: str, chat_id: str, text: str, state_data: d
     school = await school_service.create_school(text)
     
     if school:
-        await send_message(max_client, chat_id, f"✅ Школа «{text}» успешно добавлена!", get_manage_schools_keyboard())
+        await send_message(max_client, user_id, f"✅ Школа «{text}» успешно добавлена!", get_manage_schools_keyboard())
     else:
-        await send_message(max_client, chat_id, "❌ Школа с таким названием уже существует.\n\nВведите другое название:", get_back_menu())
+        await send_message(max_client, user_id, "❌ Школа с таким названием уже существует.\n\nВведите другое название:", get_back_menu())
     
     return JSONResponse(status_code=200, content={"status": "ok"})
 
@@ -332,7 +331,7 @@ async def handle_add_school(user_id: str, chat_id: str, text: str, state_data: d
 async def handle_create_post_text(user_id: str, chat_id: str, text: str, state_data: dict, max_client: MAXAPIClient):
     """Обработка текста поста"""
     set_user_state(user_id, None)
-    await send_message(max_client, chat_id, "✅ Пост создан!")
+    await send_message(max_client, user_id, "✅ Пост создан!")
     return JSONResponse(status_code=200, content={"status": "ok"})
 
 
@@ -341,9 +340,9 @@ async def handle_send_notification(user_id: str, chat_id: str, text: str, state_
     school_id = state_data.get('school_id')
     
     if not school_id:
-        await send_message(max_client, chat_id, "❌ Ошибка: школа не выбрана")
+        await send_message(max_client, user_id, "❌ Ошибка: школа не выбрана")
         return JSONResponse(status_code=200, content={"status": "ok"})
     
     set_user_state(user_id, None)
-    await send_message(max_client, chat_id, f"✅ Уведомление отправлено подписчикам школы!")
+    await send_message(max_client, user_id, f"✅ Уведомление отправлено подписчикам школы!")
     return JSONResponse(status_code=200, content={"status": "ok"})

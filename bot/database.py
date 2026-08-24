@@ -18,7 +18,14 @@ async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
         # min_size=1, max_size=5 оптимально для Vercel, чтобы не перегружать Supabase
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+        # statement_cache_size=0 отключает кэш для совместимости с PgBouncer
+        _pool = await asyncpg.create_pool(
+            DATABASE_URL, 
+            min_size=1, 
+            max_size=5,
+            command_timeout=60,
+            statement_cache_size=0
+        )
     return _pool
 
 

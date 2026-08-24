@@ -1,6 +1,7 @@
 import aiohttp
 import asyncio
 import logging
+import ssl
 from typing import Optional, List, Dict, Any
 from bot.config import BOT_TOKEN, MAX_API_URL
 
@@ -15,10 +16,17 @@ class MAXAPIClient:
         self.base_url = MAX_API_URL.rstrip('/')
         self.session: Optional[aiohttp.ClientSession] = None
         self._semaphore = asyncio.Semaphore(2)  # Лимит 2 запроса в секунду
+        
+        # Отключаем проверку SSL для Vercel
+        self.ssl_context = ssl.create_default_context()
+        self.ssl_context.check_hostname = False
+        self.ssl_context.verify_mode = ssl.CERT_NONE
     
     async def _get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
+            # Используем контекст без проверки SSL
+            connector = aiohttp.TCPConnector(ssl=self.ssl_context)
+            self.session = aiohttp.ClientSession(connector=connector)
         return self.session
     
     async def close(self):
@@ -100,7 +108,7 @@ class MAXAPIClient:
                 "Authorization": f"Bearer {self.token}"
             }
             
-            url = f"{self.base_url}/api/v1/uploads"
+            url = f"{self.base_url}/uploads"
             
             with open(file_path, 'rb') as f:
                 data = aiohttp.FormData()
@@ -144,7 +152,7 @@ class MAXAPIClient:
                 if attachments:
                     payload["attachments"] = attachments
                 
-                url = f"{self.base_url}/api/v1/messages/{message_id}/edit"
+                url = f"{self.base_url}/messages/{message_id}/edit"
                 
                 async with session.put(url, json=payload, headers=headers) as response:
                     return response.status in (200, 201)
@@ -161,7 +169,7 @@ class MAXAPIClient:
                 "Authorization": f"Bearer {self.token}"
             }
             
-            url = f"{self.base_url}/api/v1/messages/{message_id}"
+            url = f"{self.base_url}/messages/{message_id}"
             
             async with session.delete(url, headers=headers) as response:
                 return response.status == 200
@@ -184,7 +192,7 @@ class MAXAPIClient:
                 "text": text
             }
             
-            url = f"{self.base_url}/api/v1/callbacks/answer"
+            url = f"{self.base_url}/callbacks/answer"
             
             async with session.post(url, json=payload, headers=headers) as response:
                 return response.status in (200, 201)
