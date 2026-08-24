@@ -3,7 +3,7 @@ from typing import Optional, List, Dict
 from bot.database import get_db
 
 
-class StatisticsService:
+class StatsService:
     """Сервис для работы со статистикой"""
     
     async def get_school_stats(self, school_id: int) -> Optional[dict]:
