@@ -150,7 +150,7 @@ async def send_message(max_client: MAXAPIClient, user_id: str, text: str, keyboa
     
     logger.info(f"Отправка сообщения пользователю {user_id}: {text[:100]}...")
     
-    result = await max_client.send_message(user_id=user_id, text=text, keyboard=keyboard)
+    result = await max_client.send_message(chat_id=user_id, text=text, keyboard=keyboard)
     
     if result:
         logger.info(f"Сообщение успешно отправлено, result: {result}")
