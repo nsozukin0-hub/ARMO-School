@@ -28,7 +28,7 @@ class MAXAPIClient:
     
     async def send_message(
         self,
-        user_id: str,
+        chat_id: str,
         text: str,
         keyboard: Optional[Dict[str, Any]] = None,
         attachments: Optional[List[Dict]] = None,
@@ -38,7 +38,7 @@ class MAXAPIClient:
         Отправка сообщения пользователю через MAX API
         
         Args:
-            user_id: ID пользователя в MAX
+            chat_id: ID чата/диалога в MAX
             text: Текст сообщения (до 4000 символов)
             keyboard: Inline клавиатура
             attachments: Список вложений
@@ -56,9 +56,7 @@ class MAXAPIClient:
                 }
                 
                 payload = {
-                    "user_id": user_id,
-                    "text": text,
-                    "notify": notify
+                    "text": text
                 }
                 
                 if keyboard:
@@ -67,9 +65,10 @@ class MAXAPIClient:
                 if attachments:
                     payload["attachments"] = attachments
                 
-                url = f"{self.base_url}/api/v1/messages/send"
+                # Правильный эндпоинт для MAX API: отправка в диалог
+                url = f"{self.base_url}/api/v1/dialogs/{chat_id}/messages"
                 
-                logger.info(f"Отправка сообщения пользователю {user_id}: {text[:50]}...")
+                logger.info(f"Отправка сообщения в чат {chat_id}: {text[:50]}...")
                 async with session.post(url, json=payload, headers=headers) as response:
                     response_data = await response.json()
                     logger.info(f"Ответ MAX API: {response.status} - {response_data}")
