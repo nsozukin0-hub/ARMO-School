@@ -1,54 +1,79 @@
 import asyncio
 import logging
-from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart
-from aiogram.types import Message
-from aiogram.fsm.storage.memory import MemoryStorage
+from contextlib import asynccontextmanager
 
-from bot.config import BOT_TOKEN, LOG_LEVEL
-from bot.models.database import init_db
-from bot.handlers import user_handlers, admin_handlers
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+import uvicorn
+
+from bot.database import init_db
+from bot.handlers.webhook_handler import router as webhook_router
+from bot.services.max_api import MAXAPIClient
+from bot.config import BOT_TOKEN
 
 # Настройка логирования
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+# Глобальный клиент MAX API
+max_client = None
 
-async def main():
-    """Основная функция запуска бота"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Управление жизненным циклом приложения"""
+    global max_client
     
-    # Инициализация базы данных
-    init_db()
-    logger.info("База данных инициализирована")
+    # Инициализация при запуске
+    logger.info("Инициализация базы данных...")
+    await init_db()
     
-    # Создание бота и диспетчера
-    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.MARKDOWN)
-    dp = Dispatcher(storage=MemoryStorage())
+    logger.info("Инициализация MAX API клиента...")
+    max_client = MAXAPIClient(BOT_TOKEN)
     
-    # Регистрация роутеров
-    dp.include_router(user_handlers.router)
-    dp.include_router(admin_handlers.router)
+    logger.info(f"Бот МАКС запущен! Токен: {BOT_TOKEN[:10]}...")
+    logger.info(f"MAX API URL: {MAX_API_URL}")
     
-    # Обработчик команды start (глобальный)
-    @dp.message(CommandStart())
-    async def cmd_start_global(message: Message):
-        await user_handlers.cmd_start(message)
+    yield
     
-    logger.info("Бот МАКС запущен...")
-    
-    try:
-        # Запуск polling
-        await dp.start_polling(bot)
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен пользователем")
-    finally:
-        await bot.session.close()
-        logger.info("Сессия бота закрыта")
+    # Очистка при остановке
+    if max_client:
+        await max_client.close()
+    logger.info("Бот остановлен")
 
+# Создание приложения FastAPI
+app = FastAPI(
+    title="МАКС Бот для школ",
+    description="Бот для информирования о новостях и событиях школ района",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Подключение роутера вебхука
+app.include_router(webhook_router)
+
+@app.get("/")
+async def root():
+    """Проверка работоспособности"""
+    return {
+        "status": "ok",
+        "message": "МАКС Бот для школ работает",
+        "version": "1.0.0"
+    }
+
+@app.get("/health")
+async def health_check():
+    """Проверка здоровья для мониторинга"""
+    return {"status": "healthy"}
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Запуск сервера
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
+        log_level="info"
+    )

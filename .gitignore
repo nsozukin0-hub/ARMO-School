@@ -1,70 +1,54 @@
 ```
-# Environment variables
-.env
-.env.local
-*.env.*
-
-# Logs and temporary files
-*.log
-*.tmp
-*.swp
-
-# Dependencies and build artifacts
-node_modules/
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 *.so
-*.dylib
-*.dll
-*.exe
-*.out
-*.o
-*.obj
-dist/
+.Python
 build/
-target/
-.coverage
-coverage/
-htmlcov/
-.mypy_cache/
-.pytest_cache/
-.venv/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
 venv/
-.env/
+ENV/
+env.bak/
+.venv/
+env/
 
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Editor specific
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Compressed files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Coverage
+.coverage
+htmlcov/
+.coverage.*
+.coverage.xml
 ```

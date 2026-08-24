@@ -1,61 +1,78 @@
-from sqlalchemy.orm import Session
-from typing import List, Optional
-
-from bot.models.school import School
-from bot.models.subscription import Subscription
-from bot.models.statistics import Statistics
-from bot.utils.validators import validate_school_name
+import aiosqlite
+from typing import Optional, List
+from bot.database import get_db
 
 
 class SchoolService:
     """Сервис для работы со школами"""
-
-    def __init__(self, db: Session):
-        self.db = db
-
-    def add_school(self, name: str) -> Optional[School]:
-        """Добавить школу"""
-        if not validate_school_name(name):
-            return None
-        
-        # Проверка на дубликат
-        existing = self.get_school_by_name(name.strip())
-        if existing:
-            return None
-        
-        school = School(name=name.strip())
-        self.db.add(school)
-        
-        # Создаем статистику для школы
-        stats = Statistics(school_id=school.id)
-        self.db.add(stats)
-        
-        self.db.commit()
-        self.db.refresh(school)
-        return school
-
-    def delete_school(self, school_id: int) -> bool:
-        """Удалить школу"""
-        school = self.get_school(school_id)
-        if not school:
-            return False
-        
-        self.db.delete(school)
-        self.db.commit()
-        return True
-
-    def get_all_schools(self) -> List[School]:
-        """Получить все школы"""
-        return self.db.query(School).order_by(School.name).all()
-
-    def get_school(self, school_id: int) -> Optional[School]:
-        """Получить школу по ID"""
-        return self.db.query(School).filter(School.id == school_id).first()
-
-    def get_school_by_name(self, name: str) -> Optional[School]:
-        """Получить школу по названию"""
-        return self.db.query(School).filter(School.name == name.strip()).first()
-
-    def school_exists(self, school_id: int) -> bool:
-        """Проверить существование школы"""
-        return self.get_school(school_id) is not None
+    
+    async def create_school(self, name: str) -> Optional[dict]:
+        """Создание новой школы"""
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                "INSERT INTO schools (name) VALUES (?) RETURNING *",
+                (name,)
+            )
+            school = await cursor.fetchone()
+            await db.commit()
+            
+            # Создаем запись статистики для школы
+            if school:
+                await db.execute(
+                    "INSERT INTO statistics (school_id) VALUES (?)",
+                    (school['id'],)
+                )
+                await db.commit()
+            
+            return dict(school) if school else None
+        except aiosqlite.IntegrityError:
+            return None  # Школа с таким именем уже существует
+        finally:
+            await db.close()
+    
+    async def delete_school(self, school_id: int) -> bool:
+        """Удаление школы"""
+        db = await get_db()
+        try:
+            await db.execute("DELETE FROM schools WHERE id = ?", (school_id,))
+            await db.commit()
+            return True
+        finally:
+            await db.close()
+    
+    async def get_all_schools(self) -> List[dict]:
+        """Получение всех школ"""
+        db = await get_db()
+        try:
+            cursor = await db.execute("SELECT * FROM schools ORDER BY name")
+            schools = await cursor.fetchall()
+            return [dict(s) for s in schools]
+        finally:
+            await db.close()
+    
+    async def get_school_by_id(self, school_id: int) -> Optional[dict]:
+        """Получение школы по ID"""
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                "SELECT * FROM schools WHERE id = ?",
+                (school_id,)
+            )
+            school = await cursor.fetchone()
+            return dict(school) if school else None
+        finally:
+            await db.close()
+    
+    async def school_exists(self, school_id: int) -> bool:
+        """Проверка существования школы"""
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                "SELECT 1 FROM schools WHERE id = ?",
+                (school_id,)
+            )
+            row = await cursor.fetchone()
+            return row is not None
+        finally:
+            await db.close()
