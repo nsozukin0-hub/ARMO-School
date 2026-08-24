@@ -9,7 +9,7 @@ class User(Base):
     __tablename__ = 'users'
 
     id = Column(Integer, primary_key=True, index=True)
-    telegram_id = Column(Integer, unique=True, nullable=False, index=True)
+    max_id = Column(Integer, unique=True, nullable=False, index=True)  # ID пользователя в MAX
     username = Column(String(255), nullable=True)
     first_name = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -18,4 +18,4 @@ class User(Base):
     subscriptions = relationship('Subscription', back_populates='user', cascade='all, delete-orphan')
 
     def __repr__(self):
-        return f"<User(id={self.id}, telegram_id={self.telegram_id}, username='{self.username}')>"
+        return f"<User(id={self.id}, max_id={self.max_id}, username='{self.username}')>"
