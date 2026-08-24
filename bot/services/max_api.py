@@ -64,19 +64,20 @@ class MAXAPIClient:
                 }
                 
                 payload = {
-                    "text": text
+                    "peer_id": int(chat_id),
+                    "message": text
                 }
                 
                 if keyboard:
-                    payload["inline_keyboard"] = keyboard
+                    payload["keyboard"] = keyboard
                 
                 if attachments:
-                    payload["attachments"] = attachments
+                    payload["attachment"] = attachments
                 
-                # Правильный эндпоинт для MAX API: отправка в диалог
-                url = f"{self.base_url}/api/v1/dialogs/{chat_id}/messages"
+                # Правильный эндпоинт для VK API: messages.send
+                url = f"{self.base_url}/api/v1/messages.send"
                 
-                logger.info(f"Отправка сообщения в чат {chat_id}: {text[:50]}...")
+                logger.info(f"Отправка сообщения пользователю {chat_id}: {text[:50]}...")
                 async with session.post(url, json=payload, headers=headers) as response:
                     response_data = await response.json()
                     logger.info(f"Ответ MAX API: {response.status} - {response_data}")
