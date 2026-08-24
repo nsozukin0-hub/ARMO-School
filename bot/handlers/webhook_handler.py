@@ -50,6 +50,11 @@ async def get_max_client() -> MAXAPIClient:
 async def webhook_handler(request: Request):
     """Обработчик вебхуков от MAX API"""
     try:
+        # Логируем заголовки для отладки
+        headers = dict(request.headers)
+        logger.info(f"Получен запрос на /webhook от {request.client.host if request.client else 'unknown'}")
+        logger.info(f"Заголовки: {headers}")
+        
         data = await request.json()
         logger.info(f"Получен вебхук: {data}")
         
@@ -135,7 +140,12 @@ async def send_message(max_client: MAXAPIClient, user_id: str, text: str, keyboa
         logger.warning("MAX клиент не инициализирован")
         return None
     
+    logger.info(f"Отправка сообщения пользователю {user_id}: {text[:100]}...")
     result = await max_client.send_message(user_id=user_id, text=text, keyboard=keyboard)
+    if result:
+        logger.info(f"Сообщение успешно отправлено, message_id: {result}")
+    else:
+        logger.error(f"Не удалось отправить сообщение пользователю {user_id}")
     return result
 
 
@@ -281,7 +291,7 @@ async def handle_callback(callback_data: dict, user_id: str, user: dict, **servi
     callback_id = callback_data.get('id')
     action = callback_data.get('action', '')
     
-    logger.info(f"Callback: {action} от пользователя {user_id}")
+    logger.info(f"Callback: {action} от пользователя {user_id}, callback_id: {callback_id}")
     
     # Ответ на callback
     answer_text = ""
@@ -315,6 +325,8 @@ async def handle_callback(callback_data: dict, user_id: str, user: dict, **servi
         school_service = services['school_service']
         schools = await school_service.get_all_schools()
         subscribed_ids = await services['user_service'].get_subscribed_school_ids(user['id'])
+        
+        logger.info(f"Пользователь {user_id} сохранил подписки: {len(subscribed_ids)} школ")
         
         return JSONResponse(content={
             "status": "ok",
