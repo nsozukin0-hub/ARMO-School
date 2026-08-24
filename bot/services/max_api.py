@@ -75,7 +75,7 @@ class MAXAPIClient:
                 if attachments:
                     payload["attachments"] = attachments
                 
-                url = f"{self.base_url}/api/v1/messages/send"
+                url = f"{self.base_url}/messages/send"
                 
                 logger.info(f"Отправка сообщения пользователю {user_id}: {text[:50]}...")
                 async with session.post(url, json=payload, headers=headers) as response:
@@ -109,7 +109,7 @@ class MAXAPIClient:
                 "Authorization": f"Bearer {self.token}"
             }
             
-            url = f"{self.base_url}/api/v1/uploads"
+            url = f"{self.base_url}/uploads"
             
             with open(file_path, 'rb') as f:
                 data = aiohttp.FormData()
@@ -153,7 +153,7 @@ class MAXAPIClient:
                 if attachments:
                     payload["attachments"] = attachments
                 
-                url = f"{self.base_url}/api/v1/messages/{message_id}/edit"
+                url = f"{self.base_url}/messages/{message_id}/edit"
                 
                 async with session.put(url, json=payload, headers=headers) as response:
                     return response.status in (200, 201)
@@ -170,7 +170,7 @@ class MAXAPIClient:
                 "Authorization": f"Bearer {self.token}"
             }
             
-            url = f"{self.base_url}/api/v1/messages/{message_id}"
+            url = f"{self.base_url}/messages/{message_id}"
             
             async with session.delete(url, headers=headers) as response:
                 return response.status == 200
@@ -193,7 +193,7 @@ class MAXAPIClient:
                 "text": text
             }
             
-            url = f"{self.base_url}/api/v1/callbacks/answer"
+            url = f"{self.base_url}/callbacks/answer"
             
             async with session.post(url, json=payload, headers=headers) as response:
                 return response.status in (200, 201)
