@@ -9,7 +9,7 @@ import uvicorn
 from bot.database import init_db
 from bot.handlers.webhook_handler import router as webhook_router
 from bot.services.max_api import MAXAPIClient
-from bot.config import BOT_TOKEN
+from bot.config import BOT_TOKEN, MAX_API_URL
 
 # Настройка логирования
 logging.basicConfig(
