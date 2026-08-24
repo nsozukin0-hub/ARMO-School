@@ -56,30 +56,25 @@ async def webhook_handler(request: Request):
         data = await request.json()
         logger.info(f"Получен вебхук: {data}")
         
-        # 1. УНИВЕРСАЛЬНОЕ ИЗВЛЕЧЕНИЕ ДАННЫХ (подстроено под реальный формат MAX API)
+        # 1. УНИВЕРСАЛЬНОЕ ИЗВЛЕЧЕНИЕ ДАННЫХ
         update_type = data.get('update_type', data.get('type', 'unknown'))
         
         message_data = data.get('message', {})
-        # Колбэки могут приходить как 'callback' или 'callback_query'
         callback_data = data.get('callback_query') or data.get('callback', {})
         
-        # Данные отправителя могут быть в message.sender или callback.from/user
         sender_data = message_data.get('sender') or callback_data.get('from') or callback_data.get('user', {})
         recipient_data = message_data.get('recipient', {})
         body_data = message_data.get('body', {})
         
-        # Извлекаем ID. user_id - это кто написал, chat_id - куда отвечать
         user_id = str(sender_data.get('user_id') or data.get('user_id'))
         chat_id = str(recipient_data.get('chat_id') or callback_data.get('message', {}).get('chat_id') or data.get('chat_id') or user_id)
         
         if not user_id:
             logger.warning("Не получен user_id из вебхука. Структура: %s", data)
-            # Возвращаем 200, чтобы платформа не спамила повторными попытками
             return JSONResponse(status_code=200, content={"status": "ignored", "reason": "no user_id"})
         
-        # Извлекаем данные пользователя для обновления в БД
+        # Извлекаем данные пользователя (только те, что есть в сервисе)
         first_name = sender_data.get('first_name', 'Пользователь')
-        last_name = sender_data.get('last_name', '')
         username = sender_data.get('username', '')
         
         # 2. Инициализация сервисов
@@ -90,12 +85,11 @@ async def webhook_handler(request: Request):
         stats_service = StatsService()
         max_client = await get_max_client()
         
-        # Создаем или обновляем пользователя в БД
+        # Создаем или обновляем пользователя в БД (БЕЗ last_name)
         user = await user_service.create_or_update_user(
             max_id=str(user_id),
             username=username,
-            first_name=first_name,
-            last_name=last_name
+            first_name=first_name
         )
         
         # 3. Обработка callback (нажатие inline-кнопок)
@@ -156,8 +150,7 @@ async def send_message(max_client: MAXAPIClient, chat_id: str, text: str, keyboa
     
     logger.info(f"Отправка сообщения в чат {chat_id}: {text[:100]}...")
     
-    # Примечание: если ваш max_client.send_message требует аргумент именно user_id, 
-    # замените chat_id=chat_id на user_id=chat_id ниже. Но логически бот отвечает в chat_id.
+    # Если ваш max_client требует аргумент именно user_id, замените chat_id=chat_id на user_id=chat_id
     result = await max_client.send_message(chat_id=chat_id, text=text, keyboard=keyboard)
     
     if result:
@@ -195,7 +188,6 @@ async def my_schools(user_id: str, chat_id: str, user: dict, user_service: UserS
         await send_message(max_client, chat_id, text, get_back_menu())
         return JSONResponse(status_code=200, content={"status": "ok"})
     
-    # Используем user['id'] (внутренний ID БД) или max_id, в зависимости от вашей реализации user_service
     db_user_id = user.get('id') if user else user_id
     subscribed_ids = await user_service.get_subscribed_school_ids(db_user_id)
     keyboard = get_schools_selection_keyboard(schools, subscribed_ids)
@@ -252,7 +244,6 @@ async def admin_menu_request(user_id: str, chat_id: str, user: dict, max_client:
 
 async def handle_callback(callback_data: dict, user_id: str, chat_id: str, user: dict, **services):
     """Обработка нажатий кнопок (inline keyboard)"""
-    # В MAX API данные кнопки обычно лежат в 'data' или 'action'
     action = callback_data.get('data') or callback_data.get('action', '')
     callback_id = callback_data.get('id') or callback_data.get('callback_id', '')
     
@@ -276,9 +267,7 @@ async def handle_callback(callback_data: dict, user_id: str, chat_id: str, user:
         subscribed_ids = await user_service.get_subscribed_school_ids(db_user_id)
         keyboard = get_schools_selection_keyboard(schools, subscribed_ids)
         
-        # Отправляем обновление сообщения или новое сообщение
         await send_message(services['max_client'], chat_id, f"✅ {answer_text}", keyboard)
-        
         return JSONResponse(status_code=200, content={"status": "ok", "answered": True})
     
     elif action == 'save_subscriptions':
@@ -287,7 +276,6 @@ async def handle_callback(callback_data: dict, user_id: str, chat_id: str, user:
         subscribed_ids = await user_service.get_subscribed_school_ids(db_user_id)
         
         logger.info(f"Пользователь {user_id} сохранил подписки: {len(subscribed_ids)} школ")
-        
         await send_message(services['max_client'], chat_id, f"✅ Ваши подписки сохранены!\n\nВы подписаны на {len(subscribed_ids)} школ(ы).", get_main_menu())
         return JSONResponse(status_code=200, content={"status": "ok", "answered": True})
     
