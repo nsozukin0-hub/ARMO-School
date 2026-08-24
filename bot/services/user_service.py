@@ -1,118 +1,128 @@
-from sqlalchemy.orm import Session
-from typing import List, Optional
-import asyncio
-
-from bot.models.user import User
-from bot.models.subscription import Subscription
-from bot.services.max_api import max_client
+import aiosqlite
+from typing import Optional, List
+from bot.database import get_db
 
 
 class UserService:
     """Сервис для работы с пользователями"""
-
-    def __init__(self, db: Session):
-        self.db = db
-
-    def create_user(self, telegram_id: int, username: str = None, first_name: str = None) -> User:
-        """Создать или обновить пользователя"""
-        user = self.get_user_by_telegram_id(telegram_id)
-        
-        if not user:
-            user = User(
-                telegram_id=telegram_id,
-                username=username,
-                first_name=first_name
-            )
-            self.db.add(user)
-            self.db.commit()
-            self.db.refresh(user)
-        else:
-            # Обновляем данные пользователя
-            if username:
-                user.username = username
-            if first_name:
-                user.first_name = first_name
-            self.db.commit()
-        
-        return user
-
-    def get_user_by_telegram_id(self, telegram_id: int) -> Optional[User]:
-        """Получить пользователя по Telegram ID"""
-        return self.db.query(User).filter(User.telegram_id == telegram_id).first()
-
-    def subscribe(self, user_id: int, school_id: int) -> bool:
-        """Подписать пользователя на школу"""
-        # Проверяем существующую подписку
-        existing = self.db.query(Subscription).filter(
-            Subscription.user_id == user_id,
-            Subscription.school_id == school_id
-        ).first()
-        
-        if existing:
-            return False  # Уже подписан
-        
-        subscription = Subscription(user_id=user_id, school_id=school_id)
-        self.db.add(subscription)
-        self.db.commit()
-        return True
-
-    def unsubscribe(self, user_id: int, school_id: int) -> bool:
-        """Отписать пользователя от школы"""
-        subscription = self.db.query(Subscription).filter(
-            Subscription.user_id == user_id,
-            Subscription.school_id == school_id
-        ).first()
-        
-        if not subscription:
-            return False
-        
-        self.db.delete(subscription)
-        self.db.commit()
-        return True
-
-    def get_subscriptions(self, user_id: int) -> List[Subscription]:
-        """Получить все подписки пользователя"""
-        return self.db.query(Subscription).filter(Subscription.user_id == user_id).all()
-
-    def get_subscribed_school_ids(self, user_id: int) -> List[int]:
-        """Получить IDs школ, на которые подписан пользователь"""
-        subscriptions = self.get_subscriptions(user_id)
-        return [sub.school_id for sub in subscriptions]
-
-    def is_subscribed(self, user_id: int, school_id: int) -> bool:
-        """Проверить, подписан ли пользователь на школу"""
-        subscription = self.db.query(Subscription).filter(
-            Subscription.user_id == user_id,
-            Subscription.school_id == school_id
-        ).first()
-        return subscription is not None
-
-    def get_all_users(self) -> List[User]:
-        """Получить всех пользователей"""
-        return self.db.query(User).all()
-
-    def get_subscribers_for_school(self, school_id: int) -> List[User]:
-        """Получить всех пользователей, подписанных на школу"""
-        subscriptions = self.db.query(Subscription).filter(
-            Subscription.school_id == school_id
-        ).all()
-        
-        user_ids = [sub.user_id for sub in subscriptions]
-        return self.db.query(User).filter(User.id.in_(user_ids)).all()
-
-    async def send_message_to_user(self, telegram_id: int, text: str, attachments: list = None) -> bool:
-        """Отправить сообщение пользователю через API МАКС"""
+    
+    async def create_or_update_user(
+        self,
+        max_id: str,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None
+    ) -> dict:
+        """Создание или обновление пользователя"""
+        db = await get_db()
         try:
-            # В реальной реализации telegram_id должен быть связан с MAX user_id
-            # Для现在开始 используем telegram_id как user_id в MAX
-            await max_client.send_message(
-                user_id=telegram_id,
-                text=text,
-                attachments=attachments,
-                notify=True,
-                format_type="markdown"
+            cursor = await db.execute(
+                """
+                INSERT INTO users (max_id, username, first_name)
+                VALUES (?, ?, ?)
+                ON CONFLICT(max_id) DO UPDATE SET
+                    username = excluded.username,
+                    first_name = excluded.first_name
+                RETURNING *
+                """,
+                (max_id, username, first_name)
             )
+            user = await cursor.fetchone()
+            await db.commit()
+            return dict(user) if user else None
+        finally:
+            await db.close()
+    
+    async def get_user_by_max_id(self, max_id: str) -> Optional[dict]:
+        """Получение пользователя по MAX ID"""
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                "SELECT * FROM users WHERE max_id = ?",
+                (max_id,)
+            )
+            user = await cursor.fetchone()
+            return dict(user) if user else None
+        finally:
+            await db.close()
+    
+    async def get_all_users(self) -> List[dict]:
+        """Получение всех пользователей"""
+        db = await get_db()
+        try:
+            cursor = await db.execute("SELECT * FROM users")
+            users = await cursor.fetchall()
+            return [dict(u) for u in users]
+        finally:
+            await db.close()
+    
+    async def subscribe_user_to_school(self, user_id: int, school_id: int) -> bool:
+        """Подписка пользователя на школу"""
+        db = await get_db()
+        try:
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO subscriptions (user_id, school_id)
+                VALUES (?, ?)
+                """,
+                (user_id, school_id)
+            )
+            await db.commit()
             return True
-        except Exception as e:
-            print(f"Ошибка отправки сообщения пользователю {telegram_id}: {e}")
-            return False
+        finally:
+            await db.close()
+    
+    async def unsubscribe_user_from_school(self, user_id: int, school_id: int) -> bool:
+        """Отписка пользователя от школы"""
+        db = await get_db()
+        try:
+            await db.execute(
+                "DELETE FROM subscriptions WHERE user_id = ? AND school_id = ?",
+                (user_id, school_id)
+            )
+            await db.commit()
+            return True
+        finally:
+            await db.close()
+    
+    async def get_subscribed_school_ids(self, user_id: int) -> List[int]:
+        """Получение ID школ, на которые подписан пользователь"""
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                "SELECT school_id FROM subscriptions WHERE user_id = ?",
+                (user_id,)
+            )
+            rows = await cursor.fetchall()
+            return [row['school_id'] for row in rows]
+        finally:
+            await db.close()
+    
+    async def is_subscribed(self, user_id: int, school_id: int) -> bool:
+        """Проверка подписки пользователя на школу"""
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                "SELECT 1 FROM subscriptions WHERE user_id = ? AND school_id = ?",
+                (user_id, school_id)
+            )
+            row = await cursor.fetchone()
+            return row is not None
+        finally:
+            await db.close()
+    
+    async def get_subscribers_for_school(self, school_id: int) -> List[dict]:
+        """Получение всех подписчиков школы"""
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                """
+                SELECT u.* FROM users u
+                JOIN subscriptions s ON u.id = s.user_id
+                WHERE s.school_id = ?
+                """,
+                (school_id,)
+            )
+            users = await cursor.fetchall()
+            return [dict(u) for u in users]
+        finally:
+            await db.close()

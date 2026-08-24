@@ -1,75 +1,140 @@
-from sqlalchemy.orm import Session
-from typing import Dict, Any, List
-
-from bot.models.statistics import Statistics
-from bot.models.subscription import Subscription
-from bot.models.post import Post
-from bot.models.user import User
+import aiosqlite
+from typing import Optional, List, Dict
+from bot.database import get_db
 
 
 class StatisticsService:
-    """Сервис для сбора и предоставления статистики"""
-
-    def __init__(self, db: Session):
-        self.db = db
-
-    def get_school_stats(self, school_id: int) -> Dict[str, Any]:
-        """Получить статистику по школе"""
-        stats = self.db.query(Statistics).filter(Statistics.school_id == school_id).first()
-        
-        if not stats:
+    """Сервис для работы со статистикой"""
+    
+    async def get_school_stats(self, school_id: int) -> Optional[dict]:
+        """Получение статистики по школе"""
+        db = await get_db()
+        try:
+            # Получаем основную статистику
+            cursor = await db.execute(
+                """
+                SELECT s.subscriber_count, s.post_count, 
+                       s.notification_count, s.view_count,
+                       sch.name as school_name
+                FROM statistics s
+                JOIN schools sch ON s.school_id = sch.id
+                WHERE s.school_id = ?
+                """,
+                (school_id,)
+            )
+            stats = await cursor.fetchone()
+            
+            if not stats:
+                return None
+            
+            result = dict(stats)
+            
+            # Получаем актуальное количество подписчиков
+            cursor = await db.execute(
+                "SELECT COUNT(*) as count FROM subscriptions WHERE school_id = ?",
+                (school_id,)
+            )
+            sub_count = await cursor.fetchone()
+            result['subscriber_count'] = sub_count['count'] if sub_count else 0
+            
+            # Получаем актуальное количество постов
+            cursor = await db.execute(
+                "SELECT COUNT(*) as count FROM posts WHERE school_id = ?",
+                (school_id,)
+            )
+            post_count = await cursor.fetchone()
+            result['post_count'] = post_count['count'] if post_count else 0
+            
+            return result
+        finally:
+            await db.close()
+    
+    async def get_all_schools_stats(self) -> List[dict]:
+        """Получение статистики по всем школам"""
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                """
+                SELECT sch.id, sch.name,
+                       s.subscriber_count, s.post_count,
+                       s.notification_count, s.view_count
+                FROM schools sch
+                LEFT JOIN statistics s ON sch.id = s.school_id
+                ORDER BY sch.name
+                """
+            )
+            schools = await cursor.fetchall()
+            
+            result = []
+            for school in schools:
+                stats_dict = dict(school)
+                school_id = stats_dict['id']
+                
+                # Получаем актуальное количество подписчиков
+                cursor = await db.execute(
+                    "SELECT COUNT(*) as count FROM subscriptions WHERE school_id = ?",
+                    (school_id,)
+                )
+                sub_count = await cursor.fetchone()
+                stats_dict['subscriber_count'] = sub_count['count'] if sub_count else 0
+                
+                # Получаем актуальное количество постов
+                cursor = await db.execute(
+                    "SELECT COUNT(*) as count FROM posts WHERE school_id = ?",
+                    (school_id,)
+                )
+                post_count = await cursor.fetchone()
+                stats_dict['post_count'] = post_count['count'] if post_count else 0
+                
+                result.append(stats_dict)
+            
+            return result
+        finally:
+            await db.close()
+    
+    async def get_total_stats(self) -> Dict[str, int]:
+        """Получение общей статистики по всем школам"""
+        db = await get_db()
+        try:
+            # Общее количество пользователей
+            cursor = await db.execute("SELECT COUNT(*) as count FROM users")
+            total_users = await cursor.fetchone()
+            
+            # Общее количество школ
+            cursor = await db.execute("SELECT COUNT(*) as count FROM schools")
+            total_schools = await cursor.fetchone()
+            
+            # Общее количество постов
+            cursor = await db.execute("SELECT COUNT(*) as count FROM posts")
+            total_posts = await cursor.fetchone()
+            
+            # Общее количество подписок
+            cursor = await db.execute("SELECT COUNT(*) as count FROM subscriptions")
+            total_subscriptions = await cursor.fetchone()
+            
             return {
-                'school_id': school_id,
-                'subscribers_count': 0,
-                'posts_count': 0,
-                'notifications_sent': 0,
-                'total_views': 0
+                'total_users': total_users['count'] if total_users else 0,
+                'total_schools': total_schools['count'] if total_schools else 0,
+                'total_posts': total_posts['count'] if total_posts else 0,
+                'total_subscriptions': total_subscriptions['count'] if total_subscriptions else 0
             }
-        
-        # Актуализируем количество подписчиков
-        subscribers_count = self.db.query(Subscription).filter(
-            Subscription.school_id == school_id
-        ).count()
-        stats.subscribers_count = subscribers_count
-        
-        # Актуализируем количество постов
-        posts_count = self.db.query(Post).filter(Post.school_id == school_id).count()
-        stats.posts_count = posts_count
-        
-        self.db.commit()
-        
-        return {
-            'school_id': school_id,
-            'subscribers_count': stats.subscribers_count,
-            'posts_count': stats.posts_count,
-            'notifications_sent': stats.notifications_sent or 0,
-            'total_views': stats.total_views or 0
-        }
-
-    def get_overall_stats(self) -> Dict[str, Any]:
-        """Получить общую статистику по всем школам"""
-        all_stats = self.db.query(Statistics).all()
-        
-        total_subscribers = sum(s.subscribers_count for s in all_stats)
-        total_posts = sum(s.posts_count for s in all_stats)
-        total_notifications = sum(s.notifications_sent or 0 for s in all_stats)
-        total_views = sum(s.total_views or 0 for s in all_stats)
-        
-        schools_count = len(all_stats)
-        users_count = self.db.query(User).count()
-        
-        return {
-            'schools_count': schools_count,
-            'users_count': users_count,
-            'total_subscribers': total_subscribers,
-            'total_posts': total_posts,
-            'total_notifications': total_notifications,
-            'total_views': total_views
-        }
-
-    def increment_notifications_sent(self, school_id: int, count: int = 1) -> None:
-        """Увеличить счетчик отправленных уведомлений"""
-        stats = self.db.query(Statistics).filter(Statistics.school_id == school_id).first()
-        if stats:
-            stats.notifications_sent = (stats.notifications_sent or 0) + count
-            self.db.commit()
+        finally:
+            await db.close()
+    
+    async def increment_view_count(self, school_id: int) -> bool:
+        """Увеличение счетчика просмотров"""
+        db = await get_db()
+        try:
+            await db.execute(
+                """
+                UPDATE statistics
+                SET view_count = view_count + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE school_id = ?
+                """,
+                (school_id,)
+            )
+            await db.commit()
+            return True
+        finally:
+            await db.close()

@@ -1,300 +1,402 @@
-"""
-Обработчик вебхуков от MAX API
-
-Этот модуль обрабатывает входящие события от платформы МАКС:
-- Новые сообщения от пользователей
-- Нажатия кнопок (callbacks)
-"""
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
+
+from bot.services.user_service import UserService
+from bot.services.school_service import SchoolService
+from bot.services.post_service import PostService
+from bot.services.notification_service import NotificationService
+from bot.services.stats_service import StatisticsService
+from bot.services.max_api import MAXAPIClient
+from bot.database import get_db
+from bot.keyboards.main_keyboard import (
+    get_main_keyboard,
+    get_back_keyboard,
+    get_schools_selection_keyboard,
+    get_admin_keyboard,
+    get_schools_list_keyboard,
+    get_post_actions_keyboard,
+    get_manage_schools_keyboard
+)
 
 logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# Хранилище состояний для FSM
+user_states: Dict[str, dict] = {}
 
 
-async def process_webhook_event(event: Dict[str, Any], max_client) -> Optional[Dict[str, Any]]:
-    """
-    Обработка входящего события от MAX API
-    
-    Args:
-        event: Данные события от MAX
-        max_client: Клиент MAX API для отправки ответов
-        
-    Returns:
-        Ответ для отправки обратно в MAX (если нужен)
-    """
+def get_user_state(user_id: str) -> dict:
+    """Получение состояния пользователя"""
+    if user_id not in user_states:
+        user_states[user_id] = {'state': None, 'data': {}}
+    return user_states[user_id]
+
+
+def set_user_state(user_id: str, state: str, data: dict = None):
+    """Установка состояния пользователя"""
+    user_states[user_id] = {'state': state, 'data': data or {}}
+
+
+@router.post("/webhook")
+async def webhook_handler(request: Request):
+    """Обработчик вебхуков от MAX API"""
     try:
-        # Определяем тип события
-        if 'message' in event:
-            return await handle_message(event['message'], max_client)
-        elif 'callback' in event:
-            return await handle_callback(event['callback'], max_client)
-        else:
-            logger.warning(f"Неизвестный тип события: {event.keys()}")
-            return None
-            
-    except Exception as e:
-        logger.error(f"Ошибка обработки события: {e}", exc_info=True)
-        return None
-
-
-async def handle_message(message: Dict[str, Any], max_client) -> Optional[Dict[str, Any]]:
-    """
-    Обработка нового сообщения от пользователя
-    
-    Поддерживаемые команды:
-    - /start - главное меню
-    - Текст кнопки: "🏫 Мои школы", "📰 Последние новости", "🔐 Админ-панель"
-    """
-    from bot.database import SessionLocal
-    from bot.services.user_service import UserService
-    from bot.services.school_service import SchoolService
-    from bot.services.post_service import PostService
-    from bot.keyboards.main_keyboard import get_main_keyboard
-    from bot.keyboards.user_keyboard import get_schools_selection_keyboard, get_back_keyboard
-    from bot.keyboards.admin_keyboard import get_admin_keyboard, get_auth_keyboard
-    
-    db = SessionLocal()
-    try:
-        user_id = message.get('user_id')
-        text = message.get('text', '').strip()
+        data = await request.json()
+        logger.info(f"Получен вебхук: {data}")
         
-        logger.info(f"Сообщение от пользователя {user_id}: {text}")
+        # Извлекаем данные о пользователе и сообщении
+        event_type = data.get('type')
+        user_data = data.get('user', {})
+        message_data = data.get('message', {})
+        callback_data = data.get('callback', {})
         
-        # Получаем или создаем пользователя
-        user_service = UserService(db)
-        user = user_service.get_user_by_max_id(user_id)
-        if not user:
-            user = user_service.create_user(
-                max_id=user_id,
-                username=message.get('username', ''),
-                first_name=message.get('first_name', '')
-            )
-            logger.info(f"Создан новый пользователь: {user_id}")
+        user_id = user_data.get('id') or data.get('user_id')
         
-        # Обработка команд
-        if text == '/start' or text == 'Главное меню':
-            await max_client.send_message(
+        if not user_id:
+            logger.warning("Не получен user_id из вебхука")
+            return JSONResponse(status_code=400, content={"error": "No user_id"})
+        
+        # Инициализация сервисов
+        user_service = UserService()
+        school_service = SchoolService()
+        post_service = PostService()
+        notification_service = NotificationService()
+        stats_service = StatisticsService()
+        
+        # Создаем или обновляем пользователя
+        user = await user_service.create_or_update_user(
+            max_id=str(user_id),
+            username=user_data.get('username'),
+            first_name=user_data.get('first_name')
+        )
+        
+        # Обработка callback (нажатие кнопок)
+        if callback_data:
+            return await handle_callback(
+                callback_data=callback_data,
                 user_id=user_id,
-                text=f"👋 Привет, {user.first_name or 'пользователь'}!\n\n"
-                     "Я бот МАКС для школ района.\n\n"
-                     "Выберите интересующий вас раздел:",
-                reply_markup=get_main_keyboard()
+                user=user,
+                user_service=user_service,
+                school_service=school_service,
+                post_service=post_service,
+                stats_service=stats_service
             )
-            return None
-            
+        
+        # Обработка текстовых сообщений
+        text = message_data.get('text', '').strip()
+        
+        if text == '/start' or text.startswith('👋'):
+            return await cmd_start(user_id, user, user_service)
         elif text == '🏫 Мои школы':
-            school_service = SchoolService(db)
-            schools = school_service.get_all_schools()
-            
-            # Получаем подписки пользователя
-            user_subscriptions = user_service.get_user_subscriptions(user.id)
-            subscribed_ids = {sub.school_id for sub in user_subscriptions}
-            
-            keyboard = get_schools_selection_keyboard(schools, subscribed_ids)
-            
-            await max_client.send_message(
-                user_id=user_id,
-                text="🏫 <b>Мои школы</b>\n\n"
-                     "Отметьте школы, новости которых вы хотите получать:\n\n"
-                     "Нажмите на школу, чтобы выбрать/снять выбор.\n"
-                     "Когда закончите, нажмите «💾 Сохранить».",
-                reply_markup=keyboard
-            )
-            return None
-            
+            return await my_schools(user_id, user, user_service, school_service)
         elif text == '📰 Последние новости':
-            # Получаем новости от выбранных школ
-            user_subscriptions = user_service.get_user_subscriptions(user.id)
-            
-            if not user_subscriptions:
-                await max_client.send_message(
-                    user_id=user_id,
-                    text="📰 <b>Последние новости</b>\n\n"
-                         "Вы ещё не подписаны ни на одну школу.\n\n"
-                         "Перейдите в раздел «🏫 Мои школы», чтобы выбрать школы.",
-                    reply_markup=get_back_keyboard("🏫 Мои школы")
-                )
-                return None
-            
-            post_service = PostService(db)
-            posts = post_service.get_posts_for_subscriptions(
-                [sub.school_id for sub in user_subscriptions],
-                limit=10
-            )
-            
-            if not posts:
-                await max_client.send_message(
-                    user_id=user_id,
-                    text="📰 <b>Последние новости</b>\n\n"
-                         "Новостей пока нет.\n\n"
-                         "Администраторы выбранных школ ещё не опубликовали материалы.",
-                    reply_markup=get_back_keyboard("🏫 Мои школы")
-                )
-                return None
-            
-            # Показываем последнюю новость
-            latest_post = posts[0]
-            school = latest_post.school
-            
-            message_text = f"📰 <b>{latest_post.title}</b>\n\n"
-            message_text += f"🏫 <i>{school.name}</i>\n"
-            message_text += f"📅 {latest_post.created_at.strftime('%d.%m.%Y %H:%M')}\n\n"
-            message_text += latest_post.content
-            
-            # TODO: Добавить обработку медиа
-            await max_client.send_message(
-                user_id=user_id,
-                text=message_text,
-                reply_markup=get_back_keyboard("📰 Последние новости")
-            )
-            return None
-            
+            return await latest_news(user_id, user, user_service, post_service)
         elif text == '🔐 Админ-панель':
-            # Запрашиваем авторизацию
-            await max_client.send_message(
-                user_id=user_id,
-                text="🔐 <b>Админ-панель</b>\n\n"
-                     "Введите логин для авторизации:",
-                reply_markup=get_auth_keyboard()
-            )
-            return None
-            
-        elif text == '💾 Сохранить':
-            await max_client.send_message(
-                user_id=user_id,
-                text="✅ Ваши предпочтения сохранены!\n\n"
-                     "Теперь вы будете получать новости от выбранных школ.\n\n"
-                     "Вернитесь в главное меню для продолжения.",
-                reply_markup=get_main_keyboard()
-            )
-            return None
-            
-        elif text == '⬅️ Назад':
-            await max_client.send_message(
-                user_id=user_id,
-                text="Выберите раздел:",
-                reply_markup=get_main_keyboard()
-            )
-            return None
-            
+            return await admin_menu_request(user_id, user)
         else:
-            # Неизвестная команда - показываем главное меню
-            await max_client.send_message(
-                user_id=user_id,
-                text=f"❓ Неизвестная команда: {text}\n\n"
-                     "Используйте кнопки меню для навигации.",
-                reply_markup=get_main_keyboard()
-            )
-            return None
+            # Проверка состояния FSM
+            state_data = get_user_state(user_id)
+            state = state_data.get('state')
             
-    finally:
-        db.close()
-
-
-async def handle_callback(callback: Dict[str, Any], max_client) -> Optional[Dict[str, Any]]:
-    """
-    Обработка нажатия на кнопку (callback)
-    
-    Поддерживаемые callback:
-    - school_select_{id} - выбор/снятие школы
-    - admin_auth - начало авторизации
-    - edit_post_{id} - редактирование поста
-    - delete_post_{id} - удаление поста
-    """
-    from bot.database import SessionLocal
-    from bot.services.user_service import UserService
-    from bot.services.school_service import SchoolService
-    from bot.services.post_service import PostService
-    from bot.keyboards.user_keyboard import get_schools_selection_keyboard
-    from bot.keyboards.admin_keyboard import get_admin_keyboard
-    
-    db = SessionLocal()
-    try:
-        user_id = callback.get('user_id')
-        callback_data = callback.get('data', '')
-        
-        logger.info(f"Callback от пользователя {user_id}: {callback_data}")
-        
-        # Отправляем ответ на callback (обязательно по API MAX)
-        await max_client.send_answer(callback_id=callback.get('id'))
-        
-        user_service = UserService(db)
-        user = user_service.get_user_by_max_id(user_id)
-        
-        if not user:
-            logger.warning(f"Пользователь {user_id} не найден")
-            return None
-        
-        # Обработка выбора школы
-        if callback_data.startswith('school_select_'):
-            school_id = int(callback_data.replace('school_select_', ''))
-            
-            # Переключаем подписку
-            is_subscribed = user_service.toggle_subscription(user.id, school_id)
-            
-            # Обновляем клавиатуру
-            school_service = SchoolService(db)
-            schools = school_service.get_all_schools()
-            user_subscriptions = user_service.get_user_subscriptions(user.id)
-            subscribed_ids = {sub.school_id for sub in user_subscriptions}
-            
-            keyboard = get_schools_selection_keyboard(schools, subscribed_ids)
-            
-            status = "✅ подписана" if is_subscribed else "⬜ отписана"
-            await max_client.send_message(
-                user_id=user_id,
-                text=f"Школа {school_id} {status}\n\n"
-                     "Продолжайте выбор или нажмите «💾 Сохранить»",
-                reply_markup=keyboard
-            )
-            return None
-            
-        elif callback_data == 'admin_auth':
-            # Начало авторизации
-            await max_client.send_message(
-                user_id=user_id,
-                text="🔐 <b>Авторизация администратора</b>\n\n"
-                     "Введите логин:",
-                reply_markup=None  # Ждём ввод текста
-            )
-            return None
-            
-        elif callback_data.startswith('edit_post_'):
-            # Редактирование поста (только для админов)
-            post_id = int(callback_data.replace('edit_post_', ''))
-            await max_client.send_message(
-                user_id=user_id,
-                text=f"✏️ Редактирование поста #{post_id}\n\n"
-                     "Введите новый текст поста:",
-                reply_markup=None
-            )
-            return None
-            
-        elif callback_data.startswith('delete_post_'):
-            # Удаление поста (только для админов)
-            post_id = int(callback_data.replace('delete_post_', ''))
-            
-            post_service = PostService(db)
-            post = post_service.get_post(post_id)
-            
-            if post:
-                post_service.delete_post(post_id)
-                await max_client.send_message(
-                    user_id=user_id,
-                    text=f"🗑 Пост #{post_id} удален",
-                    reply_markup=get_admin_keyboard()
-                )
+            if state == 'admin_auth_login':
+                return await handle_admin_login(user_id, text, state_data)
+            elif state == 'admin_auth_password':
+                return await handle_admin_password(user_id, text, state_data)
+            elif state == 'add_school_name':
+                return await handle_add_school(user_id, text, state_data, school_service)
+            elif state == 'create_post_text':
+                return await handle_create_post_text(user_id, text, state_data)
+            elif state == 'send_notification_text':
+                return await handle_send_notification(user_id, text, state_data, school_service, notification_service)
             else:
-                await max_client.send_message(
-                    user_id=user_id,
-                    text=f"❌ Пост #{post_id} не найден",
-                    reply_markup=get_admin_keyboard()
-                )
-            return None
-            
+                return await show_main_menu(user_id, user)
+        
+        return JSONResponse(content={"status": "ok"})
+        
+    except Exception as e:
+        logger.error(f"Ошибка обработки вебхука: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+async def send_message(max_client: MAXAPIClient, user_id: str, text: str, keyboard: dict = None):
+    """Отправка сообщения пользователю"""
+    payload = {"text": text}
+    if keyboard:
+        payload["keyboard"] = keyboard
+    
+    # Здесь должна быть логика отправки через MAX API
+    logger.info(f"Отправка сообщения пользователю {user_id}: {text[:100]}")
+    # В реальной реализации: await max_client.send_message(user_id=str(user_id), text=text, ...)
+
+
+async def cmd_start(user_id: str, user: dict, user_service: UserService):
+    """Обработчик команды /start"""
+    first_name = user.get('first_name', 'пользователь') if user else 'пользователь'
+    
+    text = f"👋 Привет, {first_name}!\n\nЯ бот МАКС для школ района.\n\nВыберите интересующий вас раздел:"
+    
+    # Сброс состояния
+    set_user_state(str(user_id), None)
+    
+    # Отправляем сообщение с главным меню
+    # В реальной реализации нужно использовать max_client
+    logger.info(f"Отправка приветствия пользователю {user_id}")
+    
+    return JSONResponse(content={
+        "status": "ok",
+        "message": text,
+        "keyboard": get_main_keyboard()
+    })
+
+
+async def show_main_menu(user_id: str, user: dict):
+    """Показ главного меню"""
+    text = "Выберите раздел:"
+    return JSONResponse(content={
+        "status": "ok",
+        "message": text,
+        "keyboard": get_main_keyboard()
+    })
+
+
+async def my_schools(user_id: str, user: dict, user_service: UserService, school_service: SchoolService):
+    """Показ списка школ для выбора"""
+    schools = await school_service.get_all_schools()
+    
+    if not schools:
+        return JSONResponse(content={
+            "status": "ok",
+            "message": "📭 На данный момент нет доступных школ.\nПопробуйте позже.",
+            "keyboard": get_back_keyboard()
+        })
+    
+    subscribed_ids = await user_service.get_subscribed_school_ids(user['id']) if user else []
+    keyboard = get_schools_selection_keyboard(schools, subscribed_ids)
+    
+    text = "🏫 **Выберите школы**\n\nНажмите на школу, чтобы изменить статус подписки.\nКогда закончите, нажмите «💾 Сохранить»."
+    
+    return JSONResponse(content={
+        "status": "ok",
+        "message": text,
+        "keyboard": keyboard
+    })
+
+
+async def latest_news(user_id: str, user: dict, user_service: UserService, post_service: PostService):
+    """Показ последних новостей"""
+    if not user:
+        return JSONResponse(content={
+            "status": "ok",
+            "message": "⚠️ Сначала начните работу с ботом (/start)",
+            "keyboard": get_main_keyboard()
+        })
+    
+    subscribed_ids = await user_service.get_subscribed_school_ids(user['id'])
+    
+    if not subscribed_ids:
+        return JSONResponse(content={
+            "status": "ok",
+            "message": "📭 У вас нет подписок на школы.\n\nПерейдите в раздел «🏫 Мои школы», чтобы выбрать школы.",
+            "keyboard": get_back_keyboard()
+        })
+    
+    # Получаем посты из всех выбранных школ
+    all_posts = []
+    for school_id in subscribed_ids:
+        posts = await post_service.get_posts_by_school(school_id, limit=10)
+        all_posts.extend(posts)
+    
+    # Сортируем по дате
+    all_posts.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+    
+    if not all_posts:
+        return JSONResponse(content={
+            "status": "ok",
+            "message": "📭 Новостей пока нет.\n\nПодпишитесь на школы, чтобы получать уведомления.",
+            "keyboard": get_back_keyboard()
+        })
+    
+    # Показываем последние 5 новостей
+    text = "📰 **Последние новости**\n\n"
+    for post in all_posts[:5]:
+        created_at = post.get('created_at', '')[:16] if post.get('created_at') else ''
+        post_text = post.get('text', '_Без текста_')
+        text += f"📄 {created_at}\n{post_text}\n\n"
+    
+    return JSONResponse(content={
+        "status": "ok",
+        "message": text,
+        "keyboard": get_back_keyboard()
+    })
+
+
+async def admin_menu_request(user_id: str, user: dict):
+    """Запрос админ-меню (начало авторизации)"""
+    set_user_state(str(user_id), 'admin_auth_login', {'step': 'login'})
+    
+    return JSONResponse(content={
+        "status": "ok",
+        "message": "🔐 **Админ-панель**\n\nВведите ваш логин:",
+        "keyboard": get_back_keyboard()
+    })
+
+
+async def handle_callback(callback_data: dict, user_id: str, user: dict, **services):
+    """Обработка нажатий кнопок"""
+    callback_id = callback_data.get('id')
+    action = callback_data.get('action', '')
+    
+    logger.info(f"Callback: {action} от пользователя {user_id}")
+    
+    # Ответ на callback
+    answer_text = ""
+    
+    if action.startswith('toggle_school_'):
+        school_id = int(action.split('_')[-1])
+        user_service = services['user_service']
+        
+        if await user_service.is_subscribed(user['id'], school_id):
+            await user_service.unsubscribe_user_from_school(user['id'], school_id)
+            answer_text = "Отписано от школы"
         else:
-            logger.warning(f"Неизвестный callback: {callback_data}")
-            return None
-            
-    finally:
-        db.close()
+            await user_service.subscribe_user_to_school(user['id'], school_id)
+            answer_text = "Подписано на школу"
+        
+        # Обновляем клавиатуру
+        school_service = services['school_service']
+        schools = await school_service.get_all_schools()
+        subscribed_ids = await user_service.get_subscribed_school_ids(user['id'])
+        keyboard = get_schools_selection_keyboard(schools, subscribed_ids)
+        
+        return JSONResponse(content={
+            "status": "ok",
+            "answer_callback": True,
+            "callback_id": callback_id,
+            "message": "Статус подписки обновлен",
+            "keyboard": keyboard
+        })
+    
+    elif action == 'save_subscriptions':
+        school_service = services['school_service']
+        schools = await school_service.get_all_schools()
+        subscribed_ids = await services['user_service'].get_subscribed_school_ids(user['id'])
+        
+        return JSONResponse(content={
+            "status": "ok",
+            "answer_callback": True,
+            "callback_id": callback_id,
+            "message": f"✅ Ваши подписки сохранены!\n\nВы подписаны на {len(subscribed_ids)} школ(ы).",
+            "keyboard": get_main_keyboard()
+        })
+    
+    elif action == 'menu_back':
+        return JSONResponse(content={
+            "status": "ok",
+            "answer_callback": True,
+            "callback_id": callback_id,
+            "message": "Главное меню:",
+            "keyboard": get_main_keyboard()
+        })
+    
+    elif action == 'menu_admin':
+        return JSONResponse(content={
+            "status": "ok",
+            "answer_callback": True,
+            "callback_id": callback_id,
+            "message": "🔐 **Админ-панель**\n\nВведите ваш логин:",
+            "keyboard": get_back_keyboard()
+        })
+    
+    return JSONResponse(content={"status": "ok", "answer_callback": True, "callback_id": callback_id})
+
+
+async def handle_admin_login(user_id: str, text: str, state_data: dict):
+    """Обработка ввода логина админа"""
+    from bot.config import ADMIN_LOGIN
+    
+    if text != ADMIN_LOGIN:
+        return JSONResponse(content={
+            "status": "error",
+            "message": "❌ Неверный логин. Попробуйте еще раз:"
+        })
+    
+    state_data['login'] = text
+    set_user_state(user_id, 'admin_auth_password', state_data)
+    
+    return JSONResponse(content={
+        "status": "ok",
+        "message": "✅ Логин верный.\n\nВведите пароль:"
+    })
+
+
+async def handle_admin_password(user_id: str, text: str, state_data: dict):
+    """Обработка ввода пароля админа"""
+    from bot.config import ADMIN_PASSWORD
+    
+    if text != ADMIN_PASSWORD:
+        set_user_state(user_id, None)
+        return JSONResponse(content={
+            "status": "error",
+            "message": "❌ Неверный пароль.\n\nДля входа в админ-панель введите /start и выберите «🔐 Админ-панель»"
+        })
+    
+    set_user_state(user_id, None)
+    
+    return JSONResponse(content={
+        "status": "ok",
+        "message": "✅ Авторизация успешна!",
+        "keyboard": get_admin_keyboard()
+    })
+
+
+async def handle_add_school(user_id: str, text: str, state_data: dict, school_service: SchoolService):
+    """Обработка добавления школы"""
+    set_user_state(user_id, None)
+    
+    school = await school_service.create_school(text)
+    
+    if school:
+        return JSONResponse(content={
+            "status": "ok",
+            "message": f"✅ Школа «{text}» успешно добавлена!",
+            "keyboard": get_manage_schools_keyboard()
+        })
+    else:
+        return JSONResponse(content={
+            "status": "error",
+            "message": "❌ Школа с таким названием уже существует.\n\nВведите другое название:"
+        })
+
+
+async def handle_create_post_text(user_id: str, text: str, state_data: dict):
+    """Обработка текста поста"""
+    # Здесь должна быть логика создания поста
+    set_user_state(user_id, None)
+    
+    return JSONResponse(content={
+        "status": "ok",
+        "message": "✅ Пост создан!"
+    })
+
+
+async def handle_send_notification(user_id: str, text: str, state_data: dict, school_service, notification_service):
+    """Обработка отправки уведомления"""
+    school_id = state_data.get('school_id')
+    
+    if not school_id:
+        return JSONResponse(content={
+            "status": "error",
+            "message": "❌ Ошибка: школа не выбрана"
+        })
+    
+    set_user_state(user_id, None)
+    
+    # Отправка уведомления
+    # count = await notification_service.send_notification_to_school_subscribers(...)
+    
+    return JSONResponse(content={
+        "status": "ok",
+        "message": f"✅ Уведомление отправлено подписчикам школы!"
+    })
