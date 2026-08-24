@@ -59,7 +59,7 @@ class UserService:
                 """
                 INSERT INTO subscriptions (user_id, school_id)
                 VALUES ($1, $2)
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (user_id, school_id) DO NOTHING
                 """,
                 user_id, school_id
             )
