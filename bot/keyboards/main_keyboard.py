@@ -1,7 +1,7 @@
 from typing import List, Dict, Any
 
 
-def get_main_keyboard() -> Dict[str, Any]:
+def get_main_menu() -> Dict[str, Any]:
     """Главное меню пользователя"""
     return {
         "inline_keyboard": [
@@ -12,7 +12,7 @@ def get_main_keyboard() -> Dict[str, Any]:
     }
 
 
-def get_back_keyboard() -> Dict[str, Any]:
+def get_back_menu() -> Dict[str, Any]:
     """Клавиатура с кнопкой Назад"""
     return {
         "inline_keyboard": [
@@ -39,7 +39,7 @@ def get_schools_selection_keyboard(schools: List[dict], subscribed_ids: List[int
     return {"inline_keyboard": buttons}
 
 
-def get_admin_keyboard() -> Dict[str, Any]:
+def get_admin_menu() -> Dict[str, Any]:
     """Административное меню"""
     return {
         "inline_keyboard": [
