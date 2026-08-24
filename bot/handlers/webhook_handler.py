@@ -7,14 +7,14 @@ from bot.services.user_service import UserService
 from bot.services.school_service import SchoolService
 from bot.services.post_service import PostService
 from bot.services.notification_service import NotificationService
-from bot.services.stats_service import StatisticsService
+from bot.services.stats_service import StatsService
 from bot.services.max_api import MAXAPIClient
 from bot.database import get_db
 from bot.keyboards.main_keyboard import (
-    get_main_keyboard,
-    get_back_keyboard,
+    get_main_menu,
+    get_back_menu,
     get_schools_selection_keyboard,
-    get_admin_keyboard,
+    get_admin_menu,
     get_schools_list_keyboard,
     get_post_actions_keyboard,
     get_manage_schools_keyboard
@@ -70,7 +70,7 @@ async def webhook_handler(request: Request):
         school_service = SchoolService()
         post_service = PostService()
         notification_service = NotificationService()
-        stats_service = StatisticsService()
+        stats_service = StatsService()
         max_client = await get_max_client()
         
         # Создаем или обновляем пользователя
@@ -149,19 +149,19 @@ async def cmd_start(user_id: str, user: dict, user_service: UserService, max_cli
     set_user_state(str(user_id), None)
     
     # Отправляем сообщение с главным меню через MAX API
-    await send_message(max_client, user_id, text, get_main_keyboard())
+    await send_message(max_client, user_id, text, get_main_menu())
     
     return JSONResponse(content={
         "status": "ok",
         "message": text,
-        "keyboard": get_main_keyboard()
+        "keyboard": get_main_menu()
     })
 
 
 async def show_main_menu(user_id: str, user: dict, max_client: MAXAPIClient):
     """Показ главного меню"""
     text = "Выберите раздел:"
-    keyboard = get_main_keyboard()
+    keyboard = get_main_menu()
     
     await send_message(max_client, user_id, text, keyboard)
     
@@ -178,7 +178,7 @@ async def my_schools(user_id: str, user: dict, user_service: UserService, school
     
     if not schools:
         text = "📭 На данный момент нет доступных школ.\nПопробуйте позже."
-        keyboard = get_back_keyboard()
+        keyboard = get_back_menu()
         await send_message(max_client, user_id, text, keyboard)
         return JSONResponse(content={
             "status": "ok",
@@ -204,7 +204,7 @@ async def latest_news(user_id: str, user: dict, user_service: UserService, post_
     """Показ последних новостей"""
     if not user:
         text = "⚠️ Сначала начните работу с ботом (/start)"
-        keyboard = get_main_keyboard()
+        keyboard = get_main_menu()
         await send_message(max_client, user_id, text, keyboard)
         return JSONResponse(content={
             "status": "ok",
@@ -216,7 +216,7 @@ async def latest_news(user_id: str, user: dict, user_service: UserService, post_
     
     if not subscribed_ids:
         text = "📭 У вас нет подписок на школы.\n\nПерейдите в раздел «🏫 Мои школы», чтобы выбрать школы."
-        keyboard = get_back_keyboard()
+        keyboard = get_back_menu()
         await send_message(max_client, user_id, text, keyboard)
         return JSONResponse(content={
             "status": "ok",
@@ -235,7 +235,7 @@ async def latest_news(user_id: str, user: dict, user_service: UserService, post_
     
     if not all_posts:
         text = "📭 Новостей пока нет.\n\nПодпишитесь на школы, чтобы получать уведомления."
-        keyboard = get_back_keyboard()
+        keyboard = get_back_menu()
         await send_message(max_client, user_id, text, keyboard)
         return JSONResponse(content={
             "status": "ok",
@@ -250,7 +250,7 @@ async def latest_news(user_id: str, user: dict, user_service: UserService, post_
         post_text = post.get('text', '_Без текста_')
         text += f"📄 {created_at}\n{post_text}\n\n"
     
-    keyboard = get_back_keyboard()
+    keyboard = get_back_menu()
     await send_message(max_client, user_id, text, keyboard)
     
     return JSONResponse(content={
@@ -265,7 +265,7 @@ async def admin_menu_request(user_id: str, user: dict, max_client: MAXAPIClient)
     set_user_state(str(user_id), 'admin_auth_login', {'step': 'login'})
     
     text = "🔐 **Админ-панель**\n\nВведите ваш логин:"
-    keyboard = get_back_keyboard()
+    keyboard = get_back_menu()
     
     await send_message(max_client, user_id, text, keyboard)
     
@@ -321,7 +321,7 @@ async def handle_callback(callback_data: dict, user_id: str, user: dict, **servi
             "answer_callback": True,
             "callback_id": callback_id,
             "message": f"✅ Ваши подписки сохранены!\n\nВы подписаны на {len(subscribed_ids)} школ(ы).",
-            "keyboard": get_main_keyboard()
+            "keyboard": get_main_menu()
         })
     
     elif action == 'menu_back':
@@ -330,7 +330,7 @@ async def handle_callback(callback_data: dict, user_id: str, user: dict, **servi
             "answer_callback": True,
             "callback_id": callback_id,
             "message": "Главное меню:",
-            "keyboard": get_main_keyboard()
+            "keyboard": get_main_menu()
         })
     
     elif action == 'menu_admin':
@@ -339,7 +339,7 @@ async def handle_callback(callback_data: dict, user_id: str, user: dict, **servi
             "answer_callback": True,
             "callback_id": callback_id,
             "message": "🔐 **Админ-панель**\n\nВведите ваш логин:",
-            "keyboard": get_back_keyboard()
+            "keyboard": get_back_menu()
         })
     
     return JSONResponse(content={"status": "ok", "answer_callback": True, "callback_id": callback_id})
@@ -380,7 +380,7 @@ async def handle_admin_password(user_id: str, text: str, state_data: dict):
     return JSONResponse(content={
         "status": "ok",
         "message": "✅ Авторизация успешна!",
-        "keyboard": get_admin_keyboard()
+        "keyboard": get_admin_menu()
     })
 
 
