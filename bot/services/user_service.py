@@ -15,19 +15,17 @@ class UserService:
         """Создание или обновление пользователя"""
         db = await get_db()
         try:
-            cursor = await db.execute(
+            user = await db.fetchrow(
                 """
                 INSERT INTO users (max_id, username, first_name)
-                VALUES (?, ?, ?)
-                ON CONFLICT(max_id) DO UPDATE SET
-                    username = excluded.username,
-                    first_name = excluded.first_name
+                VALUES ($1, $2, $3)
+                ON CONFLICT (max_id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    first_name = EXCLUDED.first_name
                 RETURNING *
                 """,
-                (max_id, username, first_name)
+                max_id, username, first_name
             )
-            user = await cursor.fetchone()
-            await db.commit()
             return dict(user) if user else None
         finally:
             await db.close()
@@ -36,11 +34,10 @@ class UserService:
         """Получение пользователя по MAX ID"""
         db = await get_db()
         try:
-            cursor = await db.execute(
-                "SELECT * FROM users WHERE max_id = ?",
-                (max_id,)
+            user = await db.fetchrow(
+                "SELECT * FROM users WHERE max_id = $1",
+                max_id
             )
-            user = await cursor.fetchone()
             return dict(user) if user else None
         finally:
             await db.close()
@@ -49,8 +46,7 @@ class UserService:
         """Получение всех пользователей"""
         db = await get_db()
         try:
-            cursor = await db.execute("SELECT * FROM users")
-            users = await cursor.fetchall()
+            users = await db.fetch("SELECT * FROM users")
             return [dict(u) for u in users]
         finally:
             await db.close()
@@ -61,12 +57,12 @@ class UserService:
         try:
             await db.execute(
                 """
-                INSERT OR IGNORE INTO subscriptions (user_id, school_id)
-                VALUES (?, ?)
+                INSERT INTO subscriptions (user_id, school_id)
+                VALUES ($1, $2)
+                ON CONFLICT DO NOTHING
                 """,
-                (user_id, school_id)
+                user_id, school_id
             )
-            await db.commit()
             return True
         finally:
             await db.close()
@@ -76,10 +72,9 @@ class UserService:
         db = await get_db()
         try:
             await db.execute(
-                "DELETE FROM subscriptions WHERE user_id = ? AND school_id = ?",
-                (user_id, school_id)
+                "DELETE FROM subscriptions WHERE user_id = $1 AND school_id = $2",
+                user_id, school_id
             )
-            await db.commit()
             return True
         finally:
             await db.close()
@@ -88,11 +83,10 @@ class UserService:
         """Получение ID школ, на которые подписан пользователь"""
         db = await get_db()
         try:
-            cursor = await db.execute(
-                "SELECT school_id FROM subscriptions WHERE user_id = ?",
-                (user_id,)
+            rows = await db.fetch(
+                "SELECT school_id FROM subscriptions WHERE user_id = $1",
+                user_id
             )
-            rows = await cursor.fetchall()
             return [row['school_id'] for row in rows]
         finally:
             await db.close()
@@ -101,11 +95,10 @@ class UserService:
         """Проверка подписки пользователя на школу"""
         db = await get_db()
         try:
-            cursor = await db.execute(
-                "SELECT 1 FROM subscriptions WHERE user_id = ? AND school_id = ?",
-                (user_id, school_id)
+            row = await db.fetchrow(
+                "SELECT 1 FROM subscriptions WHERE user_id = $1 AND school_id = $2",
+                user_id, school_id
             )
-            row = await cursor.fetchone()
             return row is not None
         finally:
             await db.close()
@@ -114,15 +107,14 @@ class UserService:
         """Получение всех подписчиков школы"""
         db = await get_db()
         try:
-            cursor = await db.execute(
+            users = await db.fetch(
                 """
                 SELECT u.* FROM users u
-                JOIN subscriptions s ON u.id = s.user_id
-                WHERE s.school_id = ?
+                JOIN subscriptions s ON u.max_id = s.user_id
+                WHERE s.school_id = $1
                 """,
-                (school_id,)
+                school_id
             )
-            users = await cursor.fetchall()
             return [dict(u) for u in users]
         finally:
             await db.close()
