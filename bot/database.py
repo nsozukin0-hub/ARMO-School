@@ -1,24 +1,48 @@
-import aiosqlite
+import asyncpg
+import os
 import asyncio
 from typing import Optional
 
-DB_PATH = "school_bot.db"
+# Получаем URL из переменных окружения Vercel
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise ValueError("Переменная окружения DATABASE_URL не найдена! Проверьте настройки Vercel.")
+
+# Глобальный пул соединений для переиспользования в Vercel
+_pool: Optional[asyncpg.Pool] = None
 
 
-async def get_db() -> aiosqlite.Connection:
-    """Получение соединения с базой данных"""
-    db = await aiosqlite.connect(DB_PATH)
-    db.row_factory = aiosqlite.Row
-    return db
+async def get_pool() -> asyncpg.Pool:
+    """Инициализация и получение пула соединений"""
+    global _pool
+    if _pool is None:
+        # min_size=1, max_size=5 оптимально для Vercel, чтобы не перегружать Supabase
+        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    return _pool
+
+
+async def get_db() -> asyncpg.Connection:
+    """Получение соединения из пула (аналог вашего старого get_db)"""
+    pool = await get_pool()
+    return await pool.acquire()
+
+
+async def release_db(conn: asyncpg.Connection):
+    """Освобождение соединения обратно в пул после использования"""
+    pool = await get_pool()
+    if conn:
+        await pool.release(conn)
 
 
 async def init_db():
-    """Инициализация базы данных и создание таблиц"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    """Инициализация базы данных и создание таблиц (синтаксис PostgreSQL)"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         # Таблица пользователей
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 max_id TEXT UNIQUE NOT NULL,
                 username TEXT,
                 first_name TEXT,
@@ -27,18 +51,18 @@ async def init_db():
         """)
         
         # Таблица школ
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS schools (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT UNIQUE NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
         # Таблица подписок
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 school_id INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -49,9 +73,9 @@ async def init_db():
         """)
         
         # Таблица постов
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS posts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 school_id INTEGER NOT NULL,
                 text TEXT,
                 media TEXT,
@@ -62,9 +86,9 @@ async def init_db():
         """)
         
         # Таблица статистики
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS statistics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 school_id INTEGER NOT NULL,
                 subscriber_count INTEGER DEFAULT 0,
                 post_count INTEGER DEFAULT 0,
@@ -75,6 +99,4 @@ async def init_db():
             )
         """)
         
-        await db.commit()
-    
-    print("База данных инициализирована")
+    print("✅ База данных инициализирована (PostgreSQL / Supabase)")
