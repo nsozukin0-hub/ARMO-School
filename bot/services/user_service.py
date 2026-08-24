@@ -1,4 +1,4 @@
-import aiosqlite
+import asyncpg
 from typing import Optional, List
 from bot.database import get_db
 
