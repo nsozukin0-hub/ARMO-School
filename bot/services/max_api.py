@@ -1,6 +1,7 @@
 import aiohttp
 import asyncio
 import logging
+import ssl
 from typing import Optional, List, Dict, Any
 from bot.config import BOT_TOKEN, MAX_API_URL
 
@@ -15,10 +16,17 @@ class MAXAPIClient:
         self.base_url = MAX_API_URL.rstrip('/')
         self.session: Optional[aiohttp.ClientSession] = None
         self._semaphore = asyncio.Semaphore(2)  # Лимит 2 запроса в секунду
+        
+        # Отключаем проверку SSL для Vercel
+        self.ssl_context = ssl.create_default_context()
+        self.ssl_context.check_hostname = False
+        self.ssl_context.verify_mode = ssl.CERT_NONE
     
     async def _get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
+            # Используем контекст без проверки SSL
+            connector = aiohttp.TCPConnector(ssl=self.ssl_context)
+            self.session = aiohttp.ClientSession(connector=connector)
         return self.session
     
     async def close(self):
