@@ -1,0 +1,21 @@
+2026-08-23 23:27:45,155 - __main__ - INFO - База данных инициализирована
+Traceback (most recent call last):
+  File "/workspace/main.py", line 54, in <module>
+    asyncio.run(main())
+  File "/usr/local/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/workspace/main.py", line 29, in main
+    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.MARKDOWN)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/bot.py", line 304, in __init__
+    validate_token(token)
+  File "/usr/local/lib/python3.12/site-packages/aiogram/utils/token.py", line 27, in validate_token
+    raise TokenValidationError(msg)
+aiogram.utils.token.TokenValidationError: Token is invalid!
