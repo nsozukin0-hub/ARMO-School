@@ -1,7 +1,6 @@
 import aiohttp
 import asyncio
 import logging
-import ssl
 from typing import Optional, List, Dict, Any
 from bot.config import BOT_TOKEN, MAX_API_URL
 
@@ -16,17 +15,10 @@ class MAXAPIClient:
         self.base_url = MAX_API_URL.rstrip('/')
         self.session: Optional[aiohttp.ClientSession] = None
         self._semaphore = asyncio.Semaphore(2)  # Лимит 2 запроса в секунду
-        
-        # Отключаем проверку SSL для Vercel
-        self.ssl_context = ssl.create_default_context()
-        self.ssl_context.check_hostname = False
-        self.ssl_context.verify_mode = ssl.CERT_NONE
     
     async def _get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
-            # Используем контекст без проверки SSL
-            connector = aiohttp.TCPConnector(ssl=self.ssl_context)
-            self.session = aiohttp.ClientSession(connector=connector)
+            self.session = aiohttp.ClientSession()
         return self.session
     
     async def close(self):
@@ -36,17 +28,17 @@ class MAXAPIClient:
     
     async def send_message(
         self,
-        chat_id: str,
+        user_id: str,
         text: str,
         keyboard: Optional[Dict[str, Any]] = None,
         attachments: Optional[List[Dict]] = None,
-        notify: bool = False
+        notify: bool = True
     ) -> Optional[str]:
         """
         Отправка сообщения пользователю через MAX API
         
         Args:
-            chat_id: ID чата/диалога в MAX
+            user_id: ID пользователя в MAX
             text: Текст сообщения (до 4000 символов)
             keyboard: Inline клавиатура
             attachments: Список вложений
@@ -59,25 +51,33 @@ class MAXAPIClient:
             try:
                 session = await self._get_session()
                 headers = {
-                    "Authorization": f"Bearer {self.token}",
+                    "Authorization": self.token,
                     "Content-Type": "application/json"
                 }
                 
                 payload = {
-                    "peer_id": int(chat_id),
-                    "message": text
+                    "user_id": user_id,
+                    "text": text,
+                    "notify": notify
                 }
                 
+                # Клавиатура должна быть внутри attachments как inline_keyboard
                 if keyboard:
-                    payload["keyboard"] = keyboard
+                    payload["attachments"] = [{
+                        "type": "inline_keyboard",
+                        "payload": {
+                            "buttons": keyboard.get("inline_keyboard", [])
+                        }
+                    }]
                 
                 if attachments:
-                    payload["attachment"] = attachments
+                    if "attachments" not in payload:
+                        payload["attachments"] = []
+                    payload["attachments"].extend(attachments)
                 
-                # Правильный эндпоинт для VK API: messages.send
-                url = f"{self.base_url}/api/v1/messages.send"
+                url = f"{self.base_url}/messages?user_id={user_id}"
                 
-                logger.info(f"Отправка сообщения пользователю {chat_id}: {text[:50]}...")
+                logger.info(f"Отправка сообщения пользователю {user_id}: {text[:50]}...")
                 async with session.post(url, json=payload, headers=headers) as response:
                     response_data = await response.json()
                     logger.info(f"Ответ MAX API: {response.status} - {response_data}")
@@ -106,24 +106,36 @@ class MAXAPIClient:
         try:
             session = await self._get_session()
             headers = {
-                "Authorization": f"Bearer {self.token}"
+                "Authorization": self.token
             }
             
-            url = f"{self.base_url}/uploads"
+            # Шаг 1: Получаем URL для загрузки
+            url = f"{self.base_url}/uploads?type={media_type}"
             
-            with open(file_path, 'rb') as f:
-                data = aiohttp.FormData()
-                data.add_field('file', f, filename=file_path.split('/')[-1])
-                data.add_field('type', media_type)
-                
-                async with session.post(url, data=data, headers=headers) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        return result.get("token")
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"Ошибка загрузки медиа: {response.status} - {error_text}")
+            async with session.post(url, headers=headers) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    upload_url = result.get("url")
+                    if not upload_url:
+                        logger.error("Не получен URL для загрузки медиа")
                         return None
+                    
+                    # Шаг 2: Загружаем файл на полученный URL
+                    with open(file_path, 'rb') as f:
+                        data = aiohttp.FormData()
+                        data.add_field('data', f, filename=file_path.split('/')[-1])
+                        
+                        async with session.put(upload_url, data=data) as upload_response:
+                            if upload_response.status == 200:
+                                return result.get("token")
+                            else:
+                                error_text = await upload_response.text()
+                                logger.error(f"Ошибка загрузки файла: {upload_response.status} - {error_text}")
+                                return None
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Ошибка получения URL загрузки: {response.status} - {error_text}")
+                    return None
                         
         except Exception as e:
             logger.error(f"Исключение при загрузке медиа: {e}", exc_info=True)
@@ -141,19 +153,26 @@ class MAXAPIClient:
             try:
                 session = await self._get_session()
                 headers = {
-                    "Authorization": f"Bearer {self.token}",
+                    "Authorization": self.token,
                     "Content-Type": "application/json"
                 }
                 
-                payload = {}
+                payload = {"message_id": message_id}
                 if text:
                     payload["text"] = text
                 if keyboard:
-                    payload["inline_keyboard"] = keyboard
+                    payload["attachments"] = [{
+                        "type": "inline_keyboard",
+                        "payload": {
+                            "buttons": keyboard.get("inline_keyboard", [])
+                        }
+                    }]
                 if attachments:
-                    payload["attachments"] = attachments
+                    if "attachments" not in payload:
+                        payload["attachments"] = []
+                    payload["attachments"].extend(attachments)
                 
-                url = f"{self.base_url}/messages/{message_id}/edit"
+                url = f"{self.base_url}/messages"
                 
                 async with session.put(url, json=payload, headers=headers) as response:
                     return response.status in (200, 201)
@@ -167,10 +186,10 @@ class MAXAPIClient:
         try:
             session = await self._get_session()
             headers = {
-                "Authorization": f"Bearer {self.token}"
+                "Authorization": self.token
             }
             
-            url = f"{self.base_url}/messages/{message_id}"
+            url = f"{self.base_url}/messages?message_id={message_id}"
             
             async with session.delete(url, headers=headers) as response:
                 return response.status == 200
@@ -184,7 +203,7 @@ class MAXAPIClient:
         try:
             session = await self._get_session()
             headers = {
-                "Authorization": f"Bearer {self.token}",
+                "Authorization": self.token,
                 "Content-Type": "application/json"
             }
             
@@ -193,7 +212,7 @@ class MAXAPIClient:
                 "text": text
             }
             
-            url = f"{self.base_url}/callbacks/answer"
+            url = f"{self.base_url}/answers?callback_id={callback_id}"
             
             async with session.post(url, json=payload, headers=headers) as response:
                 return response.status in (200, 201)
